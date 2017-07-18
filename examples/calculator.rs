@@ -5,21 +5,19 @@ extern crate tokio_proto;
 extern crate tokio_service;
 extern crate futures;
 
-use std::{error, io, fmt, thread};
+use std::thread;
 use std::time::Duration;
 
 use tokio_core::reactor::Core;
-use tokio_proto::{TcpClient, TcpServer};
-use tokio_service::{NewService, Service};
 use rmpv::Value;
-use futures::{future, Future};
-use rmp_rpc_demo::message::{Message, Response, Request};
-use rmp_rpc_demo::protocol::Protocol;
+use futures::Future;
+use rmp_rpc_demo::client::Client;
+use rmp_rpc_demo::server::{Server, Handler};
 
 #[derive(Clone)]
-struct CalculatorService;
+struct CalculatorServer;
 
-impl CalculatorService {
+impl Handler for CalculatorServer {
     fn handle_request(&self, method: &str, params: &[Value]) -> Result<Value, Value> {
         if params.len() != 2 {
             return Err("Expected two arguments".into());
@@ -36,72 +34,11 @@ impl CalculatorService {
     }
 }
 
-impl Service for CalculatorService {
-    type Request = Message;
-    type Response = Message;
-    type Error = ServiceError;
-    type Future = Box<Future<Item = Message, Error = ServiceError>>;
-
-    fn call(&self, req: Message) -> Self::Future {
-        match req {
-            Message::Request( Request { method, params, .. }) => {
-                let result = self.handle_request(&method, &params);
-                let response = Message::Response(Response { id: 0, result: result });
-                return Box::new(future::ok(response));
-            }
-            _ => Box::new(future::err("Unsupported message type".into())),
-        }
-    }
-}
-
-impl NewService for CalculatorService {
-    type Request = Message;
-    type Response = Message;
-    type Error = ServiceError;
-    type Instance = CalculatorService;
-
-    fn new_service(&self) -> io::Result<Self::Instance> {
-        Ok(self.clone())
-    }
-}
-
-#[derive(Debug)]
-struct ServiceError(String);
-
-impl fmt::Display for ServiceError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "ServiceError({})", self.0)
-    }
-}
-
-impl error::Error for ServiceError {
-    fn description(&self) -> &str {
-        "An error occured while processing a request"
-    }
-
-    fn cause(&self) -> Option<&error::Error> {
-        None
-    }
-}
-
-impl<'a> From<&'a str> for ServiceError {
-    fn from(err: &'a str) -> Self {
-        ServiceError(err.into())
-    }
-}
-
-impl From<ServiceError> for io::Error {
-    fn from(err: ServiceError) -> Self {
-        io::Error::new(io::ErrorKind::Other, err.0)
-    }
-}
-
 fn main() {
     let addr = "127.0.0.1:12345".parse().unwrap();
 
-    let server = TcpServer::new(Protocol, addr);
     thread::spawn(move || {
-        server.serve(CalculatorService {});
+        Server::new(CalculatorServer {}).serve(addr);
     });
 
     thread::sleep(Duration::from_millis(100));
@@ -109,28 +46,17 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let connection = TcpClient::new(Protocol).connect(&addr, &handle);
-    let requests = connection.and_then(|client| {
-        let req = Message::Request(Request {
-            method: "add".into(),
-            id: 0,
-            params: vec![1.into(), 2.into()],
+    let requests = Client::connect(&addr, &handle)
+        .and_then(|client| {
+            client.request("add", vec![1.into(), 2.into()])
+                .and_then(move |response| {
+                    println!("{:?}", response);
+                    client.request("sub", vec![2.into(), 1.into()])
+                })
+                .and_then(|response| {
+                    println!("{:?}", response);
+                    Ok(())
+                })
         });
-        client.call(req)
-            .and_then(move |response| {
-                println!("{:?}", response);
-
-                let req = Message::Request(Request {
-                    method: "wrong".into(),
-                    id: 0,
-                    params: vec![],
-                });
-                client.call(req)
-            })
-        .and_then(|response| {
-            println!("{:?}", response);
-            Ok(())
-        })
-    });
     let _ = core.run(requests);
 }
