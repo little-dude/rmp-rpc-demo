@@ -58,3 +58,34 @@ impl From<decode::Error> for DecodeError {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct ServiceError(String);
+
+impl fmt::Display for ServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "ServiceError({})", self.0)
+    }
+}
+
+impl error::Error for ServiceError {
+    fn description(&self) -> &str {
+        "An error occured while processing a request"
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        None
+    }
+}
+
+impl<'a> From<&'a str> for ServiceError {
+    fn from(err: &'a str) -> Self {
+        ServiceError(err.into())
+    }
+}
+
+impl From<ServiceError> for io::Error {
+    fn from(err: ServiceError) -> Self {
+        io::Error::new(io::ErrorKind::Other, err.0)
+    }
+}
