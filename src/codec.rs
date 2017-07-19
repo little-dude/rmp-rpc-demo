@@ -5,12 +5,12 @@ use rmpv;
 use tokio_io::codec::{Encoder, Decoder};
 
 use errors::DecodeError;
-use message::{Message, Request, Response};
+use message::Message;
 
 pub struct Codec;
 
 impl Decoder for Codec {
-    type Item = (u64, Message);
+    type Item = Message;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
@@ -20,12 +20,7 @@ impl Decoder for Codec {
             loop {
                 match Message::decode(&mut buf) {
                     Ok(message) => {
-                        res = match message {
-                            Message::Request(Request { id, .. }) | Message::Response(Response { id, .. }) => {
-                                Ok(Some((id as u64, message)))
-                            },
-                            Message::Notification(_) => panic!("Notifications not supported"),
-                        };
+                        res = Ok(Some(message));
                         break;
                     }
                     Err(err) => {
@@ -48,20 +43,13 @@ impl Decoder for Codec {
 }
 
 impl Encoder for Codec {
-    type Item = (u64, Message);
+    type Item = Message;
     type Error = io::Error;
 
-    fn encode(&mut self, item: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
-        let (id, mut message) = item;
-        match message {
-            Message::Response(ref mut response) => {
-                response.id = id as u32;
-            }
-            Message::Request(ref mut request) => {
-                request.id = id as u32;
-            }
-            Message::Notification(_) => panic!("Notifications not supported"),
-        }
-        Ok(rmpv::encode::write_value(&mut buf.writer(), &message.as_value())?)
+    fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
+        Ok(rmpv::encode::write_value(
+            &mut buf.writer(),
+            &msg.as_value(),
+        )?)
     }
 }
